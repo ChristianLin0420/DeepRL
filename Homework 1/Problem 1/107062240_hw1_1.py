@@ -2,8 +2,8 @@ import numpy as np
 
 GRID_WORLD_SHAPE = [4, 4]
 GRID_WORLD_COUNT = GRID_WORLD_SHAPE[0] * GRID_WORLD_SHAPE[1]
-DISCOUNT_FACTOR = 1.0
-THETA = 0.0001
+DISCOUNT_FACTOR = 0.9
+THETA = 0.000001
 
 class Transition:
     def __init__(self, next_state_id):
@@ -68,6 +68,7 @@ class Gridworld:
             
             if delta < THETA:
                 self.show_states(V, iteration_count)
+                self.save_states(V)
                 break
 
     def show_states(self, V, iteration_count):
@@ -80,6 +81,16 @@ class Gridworld:
                 out += str(round(V[i * GRID_WORLD_SHAPE[0] + j], 5)).ljust(9) + ' | '
             print(out)
         print('----------------------------------')
+
+    def save_states(self, V):
+        filename = "107062240_hw1_1_data_gamma_" + str(DISCOUNT_FACTOR)
+        f = open(filename, "a+")
+        for index in range(16):
+            if index == 0 or index == 15:
+                continue
+            else:
+                f.write("%f " % (V[index]))
+
 
 ########### start main iteration ###########
 gridworld = Gridworld()
