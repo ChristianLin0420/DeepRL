@@ -1,12 +1,15 @@
 import numpy as np
 
-GIRD_WORLD_SHAPE = [4, 4]
+GRID_WORLD_SHAPE = [4, 4]
+GRID_WORLD_COUNT = GRID_WORLD_SHAPE[0] * GRID_WORLD_SHAPE[1]
+DISCOUNT_FACTOR = 1.0
+THETA = 0.0001
 
 class Transition:
     def __init__(self, next_state_id):
         self.probability = 0.25
         self.next_state = next_state_id
-        self.reward = 0
+        self.reward = -1
         self.done = False
 
 class Policy:
@@ -23,27 +26,61 @@ class Policy:
             for op in index_op:
                 next_state_id = self.id + op
                 if next_state_id >= 0 and next_state_id <= 15:
-                    self.transitions.append(Transition(next_state_id))
+                    if (op == 1 and next_state_id % 4 == 0) or (op == -1 and next_state_id % 4 == 3):
+                        self.transitions.append(Transition(self.id))
+                    else:
+                        self.transitions.append(Transition(next_state_id))
+                else:
+                    self.transitions.append(Transition(self.id))
 
-    def show_transitions(self):
-        print("current state id: {}".format(self.id))
-        for t in self.transitions:
-            print("next state id: {}".format(t.next_state))
+class Gridworld:
+    def __init__(self):
+        self.gridworld = []
+        self.initial_gridworld()
 
+    def initial_gridworld(self):
+        for i in range(GRID_WORLD_COUNT):
+            new_policy = Policy(i)
+            self.gridworld.append(new_policy)
 
-def policy_iteration(policy, discount_factor = 0.9, theta = 0.000001):
-    
-    V = np.zeros(GIRD_WORLD_SHAPE)
+    def policy_iteration(self):
 
-    while True:
+        V = np.zeros(GRID_WORLD_COUNT)
+        iteration_count = 0
+        
+        while True:
+            delta = 0
+            # For each state, perform a "full backup"
+            for s in range(GRID_WORLD_COUNT):
 
-        delta = 0
+                if s == 0 or s == 15:
+                    continue
 
-    return np.array(V)
+                iteration_count += 1
+                v = 0
+                # Look at the possible next actions
+                for transition in self.gridworld[s].transitions:
+                    v += transition.probability * (transition.reward + DISCOUNT_FACTOR * V[transition.next_state])
+                
+                # How much our value function changed (across any states)
+                delta = max(delta, np.abs(v - V[s]))
+                V[s] = v
+            
+            if delta < THETA:
+                self.show_states(V, iteration_count)
+                break
 
+    def show_states(self, V, iteration_count):
+        print("iteration count: {}".format(iteration_count))
 
-# new_policy = Policy(0)
-# new_policy.show_transitions()
+        for i in range(0, GRID_WORLD_SHAPE[0]):
+            print('----------------------------------')
+            out = '| '
+            for j in range(0, GRID_WORLD_SHAPE[1]):
+                out += str(round(V[i * GRID_WORLD_SHAPE[0] + j], 5)).ljust(9) + ' | '
+            print(out)
+        print('----------------------------------')
 
-# nn_policy = Policy(9)
-# nn_policy.show_transitions()
+########### start main iteration ###########
+gridworld = Gridworld()
+gridworld.policy_iteration()
