@@ -2,8 +2,6 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
-
     
 # Creates a table of Q_values (state-action) initialized with zeros
 # Initialize Q(s, a), for all s ∈ S, a ∈ A(s), arbitrarily, and Q(terminal-state, ·) = 0.
