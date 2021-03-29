@@ -10,7 +10,6 @@ class Transition:
         self.probability = 0.25
         self.next_state = next_state_id
         self.reward = -1
-        self.done = False
 
 class Policy:
     def __init__(self, id):

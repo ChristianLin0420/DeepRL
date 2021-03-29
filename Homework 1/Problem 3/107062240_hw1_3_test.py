@@ -1,4 +1,3 @@
-
 from sys import stdin
 
 import numpy as np
@@ -28,7 +27,7 @@ class State:
         print(p1_action)
         # take action and upate board state
         self.updateState(p1_action)
-        self.showBoard()
+        # self.showBoard()
 
     def availablePositions(self):
         positions = []
@@ -95,7 +94,7 @@ if __name__ == "__main__":
 
     # load pre-trained policy
     p1 = Player("computer", exp_rate=0)
-    p1.loadPolicy("policy_p1")
+    p1.loadPolicy("hw1_3_data")
     
     # Using readlines()
     file1 = open('hw1-3_sample_input', 'r')
@@ -103,13 +102,13 @@ if __name__ == "__main__":
     
     count = 0
     # Strips the newline character
-    for line in Lines:
+
+    for line in stdin:
         count += 1
         line = line.replace("\n", "")
         arr = line.split(' ')
         original = [int(numeric_string) for numeric_string in arr]
         original = np.array(original)
         desired_array = original[1:10].reshape([BOARD_ROWS, BOARD_COLS])
-        print("player: {} Line{}: {}".format(original[0], count, desired_array))
         st = State(p1, desired_array, original[0])
         st.get_next_step()

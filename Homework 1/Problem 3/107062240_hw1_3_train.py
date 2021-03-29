@@ -198,7 +198,7 @@ class Player:
         self.lr = 0.2
         self.exp_rate = exp_rate
         self.decay_gamma = 0.9
-        self.states_value = {}  # state -> value
+        self.n = {}  # state -> value
 
     def getHash(self, board):
         boardHash = str(board.reshape(BOARD_COLS * BOARD_ROWS))

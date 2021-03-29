@@ -1,318 +1,288 @@
 import numpy as np
+from copy import deepcopy
+import matplotlib.pyplot as plt
+import pickle
 
 BOARD_ROWS = 4
 BOARD_COLS = 4
 BOARD_DEPTH = 4
 
-class State:
-    def __init__(self, p1, p2):
-        self.board = np.zeros((BOARD_ROWS, BOARD_COLS, BOARD_DEPTH))
-        self.p1 = p1
-        self.p2 = p2
-        self.isEnd = False
-        self.boardHash = None
-        self.playerSymbol = 1
+EXPLORATION_CONSTANT = 2.5
 
-    # get unique hash of current board state
-    def getHash(self):
-        self.boardHash = str(self.board.reshape(BOARD_ROWS * BOARD_COLS * BOARD_DEPTH))
-        return self.boardHash
+class Node:
+    def __init__(self, player, state, parent = None):
+        self.state = state
+        self.player = player
+        self.childs = []
+        self.parent = parent
+        self.visited_time = 0
+        self.cululative_reward = 0
+        self.q = None
 
-    def winner(self):
-        # row
-        for i in range(BOARD_ROWS):
-            for j in range(BOARD_DEPTH):
-                if sum(self.board[i, : , j]) == 4:
-                    self.isEnd = True
-                    return 1
-                if sum(self.board[i, : , j]) == -4:
-                    self.isEnd = True
-                    return -1
+class MonteCarloSearchTree:
+
+    def __init__(self, max_depth, iteration_count, player):
+        self.id_count = 0
+        self.max_depth = max_depth
+        self.iteration_count = iteration_count
+        self.world = np.zeros([BOARD_DEPTH, BOARD_ROWS, BOARD_COLS])
+        self.total_node_count = 0
+        self.tree = self.initial_game(player)
+
+        # print(self.world.shape) 
+
+    def initial_game(self, player):
+        tree = {str(self.id_count) : Node(player, self.world)}
+        self.id_count += 1
+        return tree
+
+    def selection(self):
+
+        leaf_node_found = False
+        leaf_node_id = 0
+
+        while not leaf_node_found:
+            node_id = leaf_node_id
+            n_child = len(self.tree[str(node_id)].childs)
+
+            print("node id: ", node_id)
+
+            if n_child == 0:
+                leaf_node_id = node_id
+                leaf_node_found = True
+            else:
+                maximum_uct_value = -100.0
+
+                for i in range(n_child):
+                    action = self.tree[str(node_id)].childs[i]
+
+                    child_id = str(node_id) + str(action)
+                    w = self.tree[child_id].w
+                    n = self.tree[child_id].n
+
+                    total_n = self.total_node_count
+
+                    if n == 0:
+                        n = 1e-4
+                    
+                    exploitation_value = w / n
+                    exploration_value = np.sqrt(np.log(total_n / n))
+                    uct_value = exploitation_value + self.EXPLORATION_CONSTANT * exploitation_value
+
+                    if uct_value > maximum_uct_value:
+                        maximum_uct_value = uct_value
+                        leaf_node_id = child_id
+
+        depth = len(str(leaf_node_id))
+
+        return str(leaf_node_id), depth
+
+    def expansion(self, leaf_node_id):
         
-        # col
-        for i in range(BOARD_COLS):
-            for j in range(BOARD_DEPTH):
-                if sum(self.board[: , i, j]) == 4:
-                    self.isEnd = True
-                    return 1
-                if sum(self.board[:, i, j]) == -4:
-                    self.isEnd = True
-                    return -1
-                
-        # depth
-        for i in range(BOARD_ROWS):
-            for j in range(BOARD_COLS):
-                if sum(self.board[i, j, :]) == 4:
-                    self.isEnd = True
-                    return 1
-                if sum(self.board[i, j, :]) == -4:
-                    self.isEnd = True
-                    return -1
+        current_board = self.tree[leaf_node_id].state
+        winner = self.terminal(current_board)
+        possible_actions = self.get_valid_actions(current_board)
 
-        # diagonal (2D)
-        for i in range(BOARD_ROWS):
-            diag_sum1 = 0
-            diag_sum2 = 0
-            for j in range(BOARD_DEPTH):
-                diag_sum1 += self.board[i, i, j]
-                diag_sum2 += self.board[BOARD_ROWS - i - 1, i , j]
-            d_sum = max(abs(diag_sum1), abs(diag_sum2))
-            if d_sum == 4:
-                self.isEnd = True
-                return 1 if diag_sum1 == 4 else -1
+        while winner is None:
 
-        for i in range(BOARD_COLS):
-            diag_sum1 = 0
-            diag_sum2 = 0
-            for j in range(BOARD_DEPTH):
-                diag_sum1 += self.board[j, i, i]
-                diag_sum2 += self.board[j, i, BOARD_DEPTH - i - 1]
-            d_sum = max(abs(diag_sum1), abs(diag_sum2))
-            if d_sum == 4:
-                self.isEnd = True
-                return 1 if diag_sum1 == 4 else -1
+            childs = []
 
-        for i in range(BOARD_ROWS):
-            diag_sum1 = 0
-            diag_sum2 = 0
-            for j in range(BOARD_COLS):
-                diag_sum1 += self.board[i, j, i]
-                diag_sum2 += self.board[BOARD_ROWS - i - 1, i, i]
-            d_sum = max(abs(diag_sum1), abs(diag_sum2))
-            if d_sum == 4:
-                self.isEnd = True
-                return 1 if diag_sum1 == 4 else -1
+            for action_set in possible_actions:
+                action, action_index = action_set
+                state = self.tree[leaf_node_id].state
+                current_player = self.tree[leaf_node_id].player
 
-        # tie
-        if len(self.availablePositions()) == 0:
-            self.isEnd = True
-            return 0
+                next_trun = -current_player
+                state[action] = current_player
 
-        self.isEnd = False
+                child_id = leaf_node_id + str(action_index)
+                childs.append(child_id)
+
+                self.tree[child_id] = Node(next_trun, state, leaf_node_id)
+                self.id_count += 1
+                self.tree[leaf_node_id].childs.append(action_index)
+
+            random_index = np.random.randint(low = 0, high = len(childs), size = 1)
+            child_node_id = childs[random_index[0]]
+
+        return child_node_id
+
+    def terminal(self, current_board):
+
+        def who_wins(sums):
+            if np.any(sums == CONSECUTIVRE_NODES_COUNT):
+                return 1
+            if np.any(sums == -CONSECUTIVRE_NODES_COUNT):
+                return -1
+            return None
+
+        def terminal_in_conv(current_board):
+            # row
+            for i in range(BOARD_ROWS):
+                for j in range(BOARD_DEPTH):
+                    sums = sum(leaf_state[i, :, j])
+                    result = who_wins(sums)
+
+                    if result is not None:
+                        return result
+            
+            # col
+            for i in range(BOARD_COLS):
+                for j in range(BOARD_DEPTH):
+                    sums = sum(leaf_state[: , i, j])
+                    result = who_wins(sums)
+
+                    if result is not None:
+                        return result
+                    
+            # depth
+            for i in range(BOARD_ROWS):
+                for j in range(BOARD_COLS):
+                    sums = sum(leaf_state[i, j, :])
+                    result = who_wins(sums)
+
+                    if result is not None:
+                        return result
+
+            # diagonal (2D)
+            for i in range(BOARD_ROWS):
+                diag_sum1 = 0
+                diag_sum2 = 0
+                for j in range(BOARD_DEPTH):
+                    diag_sum1 += leaf_state[i, i, j]
+                    diag_sum2 += leaf_state[BOARD_ROWS - i - 1, i , j]
+                d_sum = max(abs(diag_sum1), abs(diag_sum2))
+                if d_sum == 4:
+                    return 1 if diag_sum1 == 4 else -1
+
+            for i in range(BOARD_COLS):
+                diag_sum1 = 0
+                diag_sum2 = 0
+                for j in range(BOARD_DEPTH):
+                    diag_sum1 += leaf_state[j, i, i]
+                    diag_sum2 += leaf_state[j, i, BOARD_DEPTH - i - 1]
+                d_sum = max(abs(diag_sum1), abs(diag_sum2))
+                if d_sum == 4:
+                    return 1 if diag_sum1 == 4 else -1
+
+            for i in range(BOARD_ROWS):
+                diag_sum1 = 0
+                diag_sum2 = 0
+                for j in range(BOARD_COLS):
+                    diag_sum1 += leaf_state[i, j, i]
+                    diag_sum2 += leaf_state[BOARD_ROWS - i - 1, i, i]
+                d_sum = max(abs(diag_sum1), abs(diag_sum2))
+                if d_sum == 4:
+                    return 1 if diag_sum1 == 4 else -1
+            
+            return None
+        
+        valid_space_count = len(self.get_valid_actions(current_board))
+
+        if valid_space_count == 0:
+            return 2 # no available place to play (tie)
+            
         return None
 
-    def availablePositions(self):
-        positions = []
+    def get_valid_actions(self, current_board):
 
-        for i in range(BOARD_ROWS):
-            for j in range(BOARD_COLS):
-                for k in range(BOARD_DEPTH):
-                    if self.board[i, j, k] == 0:
-                        positions.append((i, j, k))
-    
-        return positions
+        actions = []
+        count = 0
 
-    def updateState(self, position):
-        self.board[position] = self.playerSymbol
-        self.playerSymbol = -1 if self.playerSymbol == 1 else 1
+        for d in range(BOARD_DEPTH):
+            for r in range(BOARD_ROWS):
+                for c in range(BOARD_COLS):
+                
+                    if current_board[d, r, c] == 0:
+                        actions.append([(d, r, c), count])
 
-    # only when game ends
-    def giveReward(self):
-        result = self.winner()
-        # backpropagate reward
-        if result == 1:
-            self.p1.feedReward(1)
-            self.p2.feedReward(0)
-        elif result == -1:
-            self.p1.feedReward(0)
-            self.p2.feedReward(1)
+                count += 1
+
+        return actions
+
+    def simulation(self, child_node_id):
+
+        self.total_node_count += 1
+        state = self.tree[child_node_id].state
+        previous_player = self.tree[child_node_id].player
+        finish = False
+
+        while not finish:
+
+            winner = self.terminal(state)
+
+            if winner is not None:
+                finish = True
+            else:
+                possible_actions = self.get_valid_actions(state)
+                random_index = np.random.randint(low = 0, high = len(possible_actions), size = 1)[0]
+                action, _ = possible_actions[random_index]
+
+                current_player = -previous_player
+                state[action] = -previous_player
+
+                previous_player = current_player
+
+        return winner
+
+    def back_propagate(self, child_node_id, winner):
+        player = self.tree[child_node_id].player
+
+        if winner == 2:
+            reward = 0
+        elif winner == player:
+            reward = 1
         else:
-            self.p1.feedReward(0.1)
-            self.p2.feedReward(0.5)
+            reward = -1
 
-    # board reset
-    def reset(self):
-        self.board = np.zeros((BOARD_ROWS, BOARD_COLS, BOARD_DEPTH))
-        self.boardHash = None
-        self.isEnd = False
-        self.playerSymbol = 1
+        finish_back_propagate = False
+        node_id = child_node_id
 
-    def play(self, rounds=100):
-        for i in range(rounds):
-            if i % 1 == 0:
-                print("Rounds {}".format(i))
-            while not self.isEnd:
-                # Player 1
-                positions = self.availablePositions()
-                p1_action = self.p1.chooseAction(positions, self.board, self.playerSymbol)
-                # take action and upate board state
-                self.updateState(p1_action)
-                board_hash = self.getHash()
-                self.p1.addState(board_hash)
-                # check board status if it is end
+        while not finish_back_propagate:
+            self.tree[node_id].visited_time += 1
+            self.tree[node_id].cululative_reward += reward
+            self.tree[node_id].q = self.tree[node_id].visited_time / self.tree[node_id].cululative_reward
+            parent_id = self.tree[node_id].parent
 
-                win = self.winner()
-                # print("player 1 win state: {}".format(win))
-                if win is not None:
-                    # ended with p1 either win or draw
-                    self.giveReward()
-                    self.p1.reset()
-                    self.p2.reset()
-                    self.reset()
-                    break
-                else:
-                    # Player 2
-                    positions = self.availablePositions()
-                    p2_action = self.p2.chooseAction(positions, self.board, self.playerSymbol)
-                    self.updateState(p2_action)
-                    board_hash = self.getHash()
-                    self.p2.addState(board_hash)
+            if parent_id == '0':
+                self.tree[parent_id].visited_time += 1
+                self.tree[parent_id].cululative_reward += reward
+                self.tree[parent_id].q = self.tree[parent_id].visited_time / self.tree[parent_id].cululative_reward
+                finish_back_propagate = True
+            else:
+                node_id = parent_id
+    
+    def solve(self):
+        for i in range(self.iteration_count):
+            leaf_node_id, depth_searched = self.selection()
+            child_node_id = self.expansion(leaf_node_id)
+            winner = self.simulation(child_node_id)
+            self.backprop(child_node_id, winner)
 
-                    win = self.winner()
-                    # print("player 2 win state: {}".format(win))
-                    if win is not None:
-                        # ended with p2 either win or draw
-                        self.giveReward()
-                        self.p1.reset()
-                        self.p2.reset()
-                        self.reset()
-                        break
-
-        pp1 = self.p1.states_value
-        pp2 = self.p2.states_value
-        self.p1.states_value.update(pp2)
-        self.p2.states_value.update(pp1)
-        self.p1.savePolicy()
-        self.p2.savePolicy()
-
-    # play with human
-    def play2(self):
-        while not self.isEnd:
-            # Player 1
-            positions = self.availablePositions()
-            p1_action = self.p1.chooseAction(positions, self.board, self.playerSymbol)
-            # take action and upate board state
-            self.updateState(p1_action)
-            self.showBoard()
-            # check board status if it is end
-            win = self.winner()
-            if win is not None:
-                if win == 1:
-                    print(self.p1.name, "wins!")
-                else:
-                    print("tie!")
-                self.reset()
+            if depth_searched > self.depth:
                 break
 
-            else:
-                # Player 2
-                positions = self.availablePositions()
-                p2_action = self.p2.chooseAction(positions, self.board, self.playerSymbol)
+        # SELECT BEST ACTION
+        current_state_node_id = '0'
+        action_candidates = self.tree[current_state_node_id].childs
 
-                self.updateState(p2_action)
-                self.showBoard()
-                win = self.winner()
-                if win is not None:
-                    if win == -1:
-                        print(self.p2.name, "wins!")
-                    else:
-                        print("tie!")
-                    self.reset()
-                    break
+        best_q = -100
 
-    def showBoard(self):
-        for i in range(BOARD_DEPTH):
-            print('=================')
-            for j in range(BOARD_ROWS):
-                print('-------------')
-                out = '| '
-                for k in range(0, BOARD_COLS):
-                    if self.board[i, j, k] == 1:
-                        token = 'x'
-                    if self.board[i, j, k] == -1:
-                        token = 'o'
-                    if self.board[i, j, k] == 0:
-                        token = ' '
-                    out += token + ' | '
-                print(out)
+        for a in action_candidates:
+            q = self.tree[(0,)+(a,)]['q']
+            if q > best_q:
+                best_q = q
+                best_action = a
 
-
-class Player:
-    def __init__(self, name, exp_rate = 0.3):
-        self.name = name
-        self.states = []
-        self.learning_rate = 0.2
-        self.exp_rate = exp_rate
-        self.decay_gamma = 0.9
-        self.states_value = {}
-
-    def getHash(self, board):
-        boardHash = str(board.reshape(BOARD_ROWS * BOARD_COLS * BOARD_DEPTH))
-        return boardHash
-
-    def chooseAction(self, positions, current_board, symbol):
-        if np.random.uniform(0, 1) <= self.exp_rate:
-            # take random action
-            idx = np.random.choice(len(positions))
-            action = positions[idx]
-        else:
-            value_max = -999
-            for p in positions:
-                next_board = current_board.copy()
-                next_board[p] = symbol
-                next_boardHash = self.getHash(next_board)
-                value = 0 if self.states_value.get(next_boardHash) is None else self.states_value.get(next_boardHash)
-                # print("value", value)
-                if value >= value_max:
-                    value_max = value
-                    action = p
-        # print("{} takes action {}".format(self.name, action))
-        return action
-    
-    # append a hash state
-    def addState(self, state):
-        self.states.append(state)
-
-    # at the end of game, backpropagate and update states value
-    def feedReward(self, reward):
-        for st in reversed(self.states):
-            if self.states_value.get(st) is None:
-                self.states_value[st] = 0
-            self.states_value[st] += self.learning_rate * (self.decay_gamma * reward - self.states_value[st])
-            reward = self.states_value[st]
-
-    def reset(self):
-        self.states = []
+        return best_action, best_q, depth_searched
 
     def savePolicy(self):
-        fw = open('policy_' + str(self.name), 'wb')
-        pickle.dump(self.states_value, fw)
+        fw = open('MCST_policy', 'wb')
+        pickle.dump(self.tree, fw)
         fw.close()
 
-    def loadPolicy(self, file):
-        fr = open(file, 'rb')
-        self.states_value = pickle.load(fr)
-        fr.close()
-
-class HumanPlayer:
-    def __init__(self, name):
-        self.name = name
-
-    def chooseAction(self, positions):
-        while True:
-            depth = int(input("Input your action depth:"))
-            row = int(input("Input your action row:"))
-            col = int(input("Input your action col:"))
-            action = (depth, row, col)
-            if action in positions:
-                return action
-
-if __name__ == "__main__":
-    # training
-    p1 = Player("p1")
-    p2 = Player("p2")
-
-    st = State(p1, p2)
-    print("training...")
-    st.play(20000)
-
-    # play with human
-    p1 = Player("computer", exp_rate=0)
-    p1.loadPolicy("policy_p1")
-
-    p2 = HumanPlayer("human")
-    # p2 = Player("computer", exp_rate=0)
-    # p2.loadPolicy("policy_p2")
-
-    st = State(p1, p2)
-    st.play2()
+if __name__ == '__main__':
+    mcts = MonteCarloSearchTree(4, 1, 1)
+    mcts.savePolicy()
+    best_action, max_q = mcts.solve()
+    print('best action= ', best_action, ' max_q= ', max_q)
