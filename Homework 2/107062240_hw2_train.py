@@ -1,332 +1,359 @@
 
-import numpy as np
-import collections
+import gym
+import slimevolleygym
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
+from torch.autograd import Variable
 
+import time
+import math
+import copy
+import random
 import cv2
-import gym
-import gym.spaces
-
-import slimevolleygym
-import slimevolleygym.mlp as mlp
-from slimevolleygym.mlp import Model
-from slimevolleygym import multiagent_rollout as rollout
-
-# Training parameters
-ENV_NAME = "SlimeVolleyNoFrameskip-v0"
-
-GAMMA = 0.99
-BATCH_SIZE = 32
-REPLAY_SIZE = 10 ** 4 * 4
-LEARNING_RATE = 1e-4
-TARGET_UPDATE_FREQ = 1000
-LEARNING_STARTS = 50000
-
-EPSILON_DECAY = 10**5
-EPSILON_START = 1.0
-EPSILON_FINAL = 0.02
-
-# OpenAI Gym Wrappers
-class FireResetEnv(gym.Wrapper):
-    def __init__(self, env=None):
-        """Take action on reset for environments that are fixed until firing."""
-        super(FireResetEnv, self).__init__(env)
-        print(env.unwrapped.get_action_meanings())
-        assert env.unwrapped.get_action_meanings()[1] == 'FIRE'
-        assert len(env.unwrapped.get_action_meanings()) >= 3
-
-    def step(self, action):
-        return self.env.step(action)
-
-    def reset(self):
-        self.env.reset()
-        obs, _, done, _ = self.env.step(1)
-        if done:
-            self.env.reset()
-        obs, _, done, _ = self.env.step(2)
-        if done:
-            self.env.reset()
-        return obs
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from IPython.display import clear_output
+# import torchvision.transform as T
 
 
-class MaxAndSkipEnv(gym.Wrapper):
-    def __init__(self, env=None, skip=4):
-        """Return only every `skip`-th frame"""
-        super(MaxAndSkipEnv, self).__init__(env)
-        # most recent raw observations (for max pooling across time steps)
-        self._obs_buffer = collections.deque(maxlen=2)
-        self._skip = skip
 
-    def step(self, action):
-        total_reward = 0.0
-        done = None
-        for _ in range(self._skip):
-            obs, reward, done, info = self.env.step(action)
-            self._obs_buffer.append(obs)
-            total_reward += reward
-            if done:
-                break
-        max_frame = np.max(np.stack(self._obs_buffer), axis=0)
-        return max_frame, total_reward, done, info
+# Demonstration
+# env = gym.envs.make("CartPole-v1") 
+env = gym.envs.make("SlimeVolleyNoFrameskip-v0")
 
-    def reset(self):
-        """Clear past frame buffer and init to first obs"""
-        self._obs_buffer.clear()
-        obs = self.env.reset()
-        self._obs_buffer.append(obs)
-        return obs
+# Number of states
+n_state = env.observation_space.shape[0]
+# Number of actions
+n_action = env.action_space.n
+# Number of episodes
+episodes = 10000
+# Number of hidden nodes in the DQN
+n_hidden = 50
+# Learning rate
+lr = 0.001
 
+print("n_state: {}".format(n_state))
+print("n_action: {}".format(n_action))
 
-class ProcessFrame84(gym.ObservationWrapper):
-    """
-    Downsamples image to 84x84
-    Greyscales image
+def get_screen():
+    ''' Extract one step of the simulation.'''
+    screen = env.render(mode='rgb_array').transpose((2, 0, 1))
+    screen = np.ascontiguousarray(screen, dtype=np.float32) / 255.
+    return torch.from_numpy(screen)
 
-    Returns numpy array
-    """
-    def __init__(self, env=None):
-        super(ProcessFrame84, self).__init__(env)
-        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(84, 84, 1), dtype=np.uint8)
+# Speify the number of simulation steps
+# num_steps = 2
 
-    def observation(self, obs):
-        return ProcessFrame84.process(obs)
+# # Show several steps
+# for i in range(num_steps):
+#     clear_output(wait=True)
+#     env.reset()
+#     plt.figure()
+#     plt.imshow(get_screen().cpu().permute(1, 2, 0).numpy(),
+#                interpolation='none')
+#     plt.title('CartPole-v0 Environment')
+#     plt.xticks([])
+#     plt.yticks([])
+#     plt.show()
 
-    @staticmethod
-    def process(frame):
-        if frame.size == 210 * 160 * 3:
-            img = np.reshape(frame, [210, 160, 3]).astype(np.float32)
-        elif frame.size == 250 * 160 * 3:
-            img = np.reshape(frame, [250, 160, 3]).astype(np.float32)
-        else:
-            assert False, "Unknown resolution."
-        img = img[:, :, 0] * 0.299 + img[:, :, 1] * 0.587 + img[:, :, 2] * 0.114
-        resized_screen = cv2.resize(img, (84, 110), interpolation=cv2.INTER_AREA)
-        x_t = resized_screen[18:102, :]
-        x_t = np.reshape(x_t, [84, 84, 1])
-        return x_t.astype(np.uint8)
-
-
-class ImageToPyTorch(gym.ObservationWrapper):
-    def __init__(self, env):
-        super(ImageToPyTorch, self).__init__(env)
-        old_shape = self.observation_space.shape
-        self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(old_shape[-1], old_shape[0], old_shape[1]),
-                                                dtype=np.float32)
-
-    def observation(self, observation):
-        return np.moveaxis(observation, 2, 0)
-
-
-class ScaledFloatFrame(gym.ObservationWrapper):
-    """Normalize pixel values in frame --> 0 to 1"""
-    def observation(self, obs):
-        return np.array(obs).astype(np.float32) / 255.0
-
-
-class BufferWrapper(gym.ObservationWrapper):
-    def __init__(self, env, n_steps, dtype=np.float32):
-        super(BufferWrapper, self).__init__(env)
-        self.dtype = dtype
-        old_space = env.observation_space
-        self.observation_space = gym.spaces.Box(old_space.low.repeat(n_steps, axis=0),
-                                                old_space.high.repeat(n_steps, axis=0), dtype=dtype)
-
-    def reset(self):
-        self.buffer = np.zeros_like(self.observation_space.low, dtype=self.dtype)
-        return self.observation(self.env.reset())
-
-    def observation(self, observation):
-        self.buffer[:-1] = self.buffer[1:]
-        self.buffer[-1] = observation
-        return self.buffer
-
-# DQN Architecture
-class DeepQnetwork(nn.Module):
-    def __init__(self, input_shape, n_actions):
-        super(DeepQnetwork, self).__init__()
-
-        self.conv = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.ReLU()
-        )
-
-        print("conv_out_size: {}".format(input_shape))
-
-        conv_out_size = self._get_conv_out(input_shape)
-
-        self.fc = nn.Sequential(
-            nn.Linear(conv_out_size, 512),
-            nn.ReLU(),
-            nn.Linear(512, n_actions)
-        )
-
-    def _get_conv_out(self, shape):
-        o = self.conv(torch.zeros(1, * shape))
-        return int(np.prod(o.size()))
-
-    def forward(self, x):
-        conv_out = self.conv(x).view(x.size()[0], -1)
-        return self.fc(conv_out)
-
-
-# Experience replay
-Experience = collections.namedtuple('Experience', field_names=['state', 'action', 'reward', 'done', 'new_state'])
-
-class ExperienceReplay:
-    def __init__(self, capacity):
-        self.buffer = collections.deque(maxlen=capacity)
-
-    def __len__(self):
-        return len(self.buffer)
-
-    def append(self, experience):
-        self.buffer.append(experience)
-
-    def sample(self, batch_size):
-        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
-        states, actions, rewards, dones, next_states = zip(*[self.buffer[idx] for idx in indices])
-        return np.array(states), np.array(actions), np.array(rewards, dtype=np.float32), \
-               np.array(dones, dtype=np.uint8), np.array(next_states)
-
-
-# Agent
-class Agent:
-    def __init__(self, env, replay_memory):
-        self.env = env
-        self.replay_memory = replay_memory
-        self._reset()
-        self.last_action = 0
-
-    def _reset(self):
-        self.state = env.reset()
-        self.total_reward = 0.0
-
-    def play_step(self, net, epsilon=0.0, device="cpu"):
-        """
-        Select action
-        Execute action and step environment
-        Add state/action/reward to experience replay
-        """
-        done_reward = None
-
-        if np.random.random() < epsilon:
-            action = env.action_space.sample()
-        else:
-            state_a = np.array([self.state], copy=False)
-            state_v = torch.tensor(state_a).to(device)
-            q_vals_v = net(state_v)
-            _, act_v = torch.max(q_vals_v, dim=1)
-            action = int(act_v.item())
-
-        # do step in the environment
-        new_state, reward, is_done, _ = self.env.step(action)
-        self.total_reward += reward
-        new_state = new_state
-
-        exp = Experience(self.state, action, reward, is_done, new_state)
-        self.replay_memory.append(exp)
-        self.state = new_state
-
-        if is_done:
-            done_reward = self.total_reward
-            self._reset()
-
-        return done_reward
-
-# Loss function
-def calculate_loss(batch, net, target_net, device="cpu"):
-    """
-    Calculate MSE between actual state action values,
-    and expected state action values from DQN
-    """
-    states, actions, rewards, dones, next_states = batch
-
-    states_v = torch.tensor(states).to(device)
-    next_states_v = torch.tensor(next_states).to(device)
-    actions_v = torch.tensor(actions).to(device)
-    rewards_v = torch.tensor(rewards).to(device)
-    done = torch.ByteTensor(dones).to(device)
-
-    state_action_values = net(states_v).gather(1, actions_v.long().unsqueeze(-1)).squeeze(-1)
-    next_state_values = target_net(next_states_v).max(1)[0]
-    next_state_values[done] = 0.0
-    next_state_values = next_state_values.detach()
-
-    expected_state_action_values = next_state_values * GAMMA + rewards_v
-    return nn.MSELoss()(state_action_values, expected_state_action_values)
-
-
-# Training loop
-if __name__ == "__main__":
-
-    device = torch.device("cpu")
-
-    # Make Gym environement and DQNs
-    env = gym.make(ENV_NAME)
-    net = DeepQnetwork(env.observation_space.shape, env.action_space.n).to(device)
-    # target_net = dqn_model.DQN(env.observation_space.shape, env.action_space.n).to(device)
+def plot_res(values, title=''):   
+    ''' Plot the reward curve and histogram of results over time.'''
+    # Update the window after each episode
+    clear_output(wait=True)
     
-    # print(net)
+    # Define the figure
+    f, ax = plt.subplots(nrows=1, ncols=2, figsize=(12,5))
+    f.suptitle(title)
+    ax[0].plot(values, label='score per run')
+    ax[0].axhline(195, c='red',ls='--', label='goal')
+    ax[0].set_xlabel('Episodes')
+    ax[0].set_ylabel('Reward')
+    x = range(len(values))
+    ax[0].legend()
+    # Calculate the trend
+    try:
+        z = np.polyfit(x, values, 1)
+        p = np.poly1d(z)
+        ax[0].plot(x,p(x),"--", label='trend')
+    except:
+        print('')
+    
+    # Plot the histogram of results
+    ax[1].hist(values[-50:])
+    ax[1].axvline(195, c='red', label='goal')
+    ax[1].set_xlabel('Scores per Last 50 Episodes')
+    ax[1].set_ylabel('Frequency')
+    ax[1].legend()
+    plt.show()
 
-    # replay_memory = ExperienceReplay(REPLAY_SIZE)
-    # agent = Agent(env, replay_memory)
-    # epsilon = EPSILON_START
+# def random_search(env, episodes, 
+#                   title='Random Strategy'):
+#     """ Random search strategy implementation."""
+#     final = []
 
-    # optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
-    # total_rewards = []
-    # best_mean_reward = None
-    # frame_idx = 0
-    # timestep_frame = 0
-    # timestep = time.time()
+#     for episode in range(episodes):
+#         state = env.reset()
+#         done = False
+#         total = 0
+#         while not done:
+#             # Sample random actions
+#             action = env.action_space.sample()
+#             # Take action and extract results
+#             next_state, reward, done, _ = env.step(action)
+#             # Update reward
+#             total += reward
+#             if done:
+#                 break
+#         # Add to the final reward
+#         final.append(total)
+        
+#         if episode == episodes - 1:
+#             plot_res(final,title)
+    
+#     return final
 
-    # while True:
-    #     frame_idx += 1
-    #     epsilon = max(EPSILON_FINAL, EPSILON_START - frame_idx / EPSILON_DECAY)
+# # Get random search results
+# random_s = random_search(env, episodes)
 
-    #     reward = agent.play_step(net, epsilon, device=device)
-    #     if reward is not None:
-    #         total_rewards.append(reward)
-    #         speed = (frame_idx - timestep_frame) / (time.time() - timestep)
-    #         timestep_frame = frame_idx
-    #         timestep = time.time()
-    #         mean_reward = np.mean(total_rewards[-100:])
-    #         print("{} frames: done {} games, mean reward {}, eps {}, speed {} f/s".format(
-    #             frame_idx, len(total_rewards), round(mean_reward, 3), round(epsilon,2), round(speed, 2)))
-
-    #         if best_mean_reward is None or best_mean_reward < mean_reward or len(total_rewards) % 25 == 0:
-    #             torch.save(net.state_dict(), args.env + "-" + str(len(total_rewards)) + ".dat")
-    #             if COLAB:
-    #                 gsync.update_file_to_folder(args.env + "-" + str(len(total_rewards)) + ".dat")
-    #             if best_mean_reward is not None:
-    #                 print("New best mean reward {} -> {}, model saved".format(round(best_mean_reward, 3), round(mean_reward, 3)))
-    #             best_mean_reward = mean_reward
-
-    #         if mean_reward > args.reward and len(total_rewards) > 10:
-    #             print("Game solved in {} frames! Average score of {}".format(frame_idx, mean_reward))
-    #             break
-
-    #     if len(replay_memory) < LEARNING_STARTS:
-    #         continue
-
-    #     if frame_idx % TARGET_UPDATE_FREQ == 0:
-    #         target_net.load_state_dict(net.state_dict())
-
-    #     optimizer.zero_grad()
-    #     batch = replay_memory.sample(BATCH_SIZE)
-    #     loss_t = calculate_loss(batch, net, target_net, device=device)
-    #     loss_t.backward()
-    #     optimizer.step()
-
-    env.close()
+class DQN():
+    ''' Deep Q Neural Network class. '''
+    def __init__(self, state_dim, action_dim, hidden_dim=64, lr=0.05):
+            self.criterion = torch.nn.MSELoss()
+            self.model = torch.nn.Sequential(
+                            torch.nn.Linear(state_dim, hidden_dim),
+                            torch.nn.LeakyReLU(),
+                            torch.nn.Linear(hidden_dim, hidden_dim*2),
+                            torch.nn.LeakyReLU(),
+                            torch.nn.Linear(hidden_dim*2, action_dim)
+                    )
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr)
 
 
 
+    def update(self, state, y):
+        """Update the weights of the network given a training sample. """
+        state = observation(state)
+        state = state.reshape((84, 84))
+        y_pred = self.model(torch.Tensor(state))
+        # print(y_pred)
+        loss = self.criterion(y_pred, Variable(torch.Tensor(y)))
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
+
+    def predict(self, state):
+        """ Compute Q values for all actions using the DQL. """
+        with torch.no_grad():
+            state = observation(state)
+            state = state.reshape((84, 84))
+            # print("predict state shape: {}".format(state.shape))
+            return self.model(torch.Tensor(state))
+
+    def saveModel(self):
+        save_path = './107062240_hw2.pth'
+        torch.save(self.model.state_dict(), save_path)
+
+# Expand DQL class with a replay function.
+class DQN_replay(DQN):
+    
+    #new replay function
+    def replay(self, memory, size, gamma=0.9):
+        """New replay function"""
+        #Try to improve replay speed
+        if len(memory)>=size:
+            batch = random.sample(memory,size)
+            batch_t = list(map(list, zip(*batch))) #Transpose batch list
+            states = batch_t[0]
+            actions = batch_t[1]
+            next_states = batch_t[2]
+            rewards = batch_t[3]
+            is_dones = batch_t[4]
+        
+            states = torch.Tensor(states)
+            actions_tensor = torch.Tensor(actions)
+            next_states = torch.Tensor(next_states)
+            rewards = torch.Tensor(rewards)
+            is_dones_tensor = torch.Tensor(is_dones)
+        
+            is_dones_indices = torch.where(is_dones_tensor==True)[0]
+        
+            states = observation(states)
+            next_states = observation(next_states)
+
+            all_q_values = self.model(states) # predicted q_values of all states
+            all_q_values_next = self.model(next_states)
+            #Update q values
+            all_q_values[range(len(all_q_values)),actions]=rewards+gamma*torch.max(all_q_values_next, axis=1).values
+            all_q_values[is_dones_indices.tolist(), actions_tensor[is_dones].tolist()]=rewards[is_dones_indices.tolist()]
+        
+            
+            self.update(states.tolist(), all_q_values.tolist())
+
+
+class DQN_double(DQN):
+    def __init__(self, state_dim, action_dim, hidden_dim, lr):
+        super().__init__(state_dim, action_dim, hidden_dim, lr)
+        self.target = copy.deepcopy(self.model)
+        
+    def target_predict(self, s):
+        ''' Use target network to make predicitons.'''
+        with torch.no_grad():
+            s = observation(s)
+            s = s.reshape((84, 84))
+            return self.target(torch.Tensor(s))
+        
+    def target_update(self):
+        ''' Update target network with the model weights.'''
+        self.target.load_state_dict(self.model.state_dict())
+        
+    def replay(self, memory, size, gamma=1.0):
+        ''' Add experience replay to the DQL network class.'''
+        if len(memory) >= size:
+            # Sample experiences from the agent's memory
+            data = random.sample(memory, size)
+            states = []
+            targets = []
+            # Extract datapoints from the data
+            for state, action, next_state, reward, done in data:
+                states.append(state)
+                q_values = self.predict(state).tolist()
+                if done:
+                    q_values[int(action / 6)][int(action % 6)] = reward
+                else:
+                    # The only difference between the simple replay is in this line
+                    # It ensures that next q values are predicted with the target network.
+                    q_values_next = self.target_predict(next_state)
+                    q_values[int(action / 6)][int(action % 6)] = reward + gamma * torch.max(q_values_next).item()
+
+                targets.append(q_values)
+
+            for s, t in zip(states, targets):
+                self.update(s, t)
+            # self.update(states, targets)
+
+def observation(frame):
+    """
+    returns the current observation from a frame
+    :param frame: ([int] or [float]) environment frame
+    :return: ([int] or [float]) the observation
+    """
+    # print(frame.shape)
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    frame = cv2.resize(frame, (84, 84), interpolation=cv2.INTER_AREA)
+    return frame[:, :, None]
+
+def q_learning(env, model, episodes, gamma=0.9, 
+               epsilon=0.3, eps_decay=0.99,
+               replay=False, replay_size=20, 
+               title = 'DQL', double=False, 
+               n_update=10, soft=False, verbose=True):
+    """Deep Q Learning algorithm using the DQN. """
+    final = []
+    memory = []
+    episode_i=0
+    sum_total_replay_time=0
+
+    for episode in range(episodes):
+
+        print("q_learning episode: {}".format(episode))
+
+        episode_i += 1
+
+        if double and not soft:
+            # Update target network every n_update steps
+            if episode % n_update == 0:
+                model.target_update()
+
+        if double and soft:
+            model.target_update()
+        
+        # Reset state
+        state = env.reset()
+
+        # state = observation(state)
+
+        # print(state.shape)
+
+        done = False
+        total = 0
+        
+        while not done:
+            # Implement greedy search policy to explore the state space
+            if random.random() < epsilon:
+                action = env.action_space.sample()
+            else:
+                q_values = model.predict(state)
+                action = torch.argmax(q_values).item()
+            
+            # Take action and add reward to total
+            next_state, reward, done, _ = env.step(action % 6)
+            # next_state = observation(next_state)
+
+
+            # Update total and memory
+            total += reward
+            memory.append((state, action, next_state, reward, done))
+            q_values = model.predict(state).tolist()
+             
+            if done:
+                if not replay:
+                    q_values[int(action / 6)][int(action % 6)] = reward
+                    # Update network weights
+                    model.update(state, q_values)
+                break
+
+            if replay:
+                t0 = time.time()
+                # Update network weights using replay memory
+                model.replay(memory, replay_size, gamma)
+                t1 = time.time()
+                sum_total_replay_time+=(t1-t0)
+            else: 
+                # Update network weights using the last step only
+                q_values_next = model.predict(next_state)
+                q_values[int(action / 6)][int(action % 6)] = reward + gamma * torch.max(q_values_next).item()
+                # print(q_va)
+                model.update(state, q_values)
+
+            state = next_state
+        
+        # Update epsilon
+        epsilon = max(epsilon * eps_decay, 0.01)
+        final.append(total)
+        # plot_res(final, title)
+        
+        if verbose:
+            print("episode: {}, total reward: {}".format(episode_i, total))
+
+            if episode_i % 20 == 0:
+                model.saveModel()
+
+            if replay:
+                print("Average replay time:", sum_total_replay_time/episode_i)
+        
+    return final
+
+# # Get DQN results
+# simple_dqn = DQN(n_state, n_action, n_hidden, lr)
+# simple = q_learning(env, simple_dqn, episodes, gamma=.9, epsilon=0.3)
+
+
+
+# Get replay results
+# dqn_replay = DQN_replay(n_state, n_action, n_hidden, lr)
+# replay = q_learning(env, dqn_replay, 
+#                     episodes, gamma=.9, 
+#                     epsilon=0.2, replay=True, 
+#                     title='DQL with Replay')
+
+# Get replay results
+# dqn_double = DQN_double(n_state, n_action, n_hidden, lr)
+dqn_double = torch.load("107062240_hw2_data")
+double =  q_learning(env, dqn_double, episodes, gamma=.9, 
+                    epsilon=0.2, replay=True, double=True,
+                    title='Double DQL with Replay', n_update=10)
+
+
+## https://github.com/ritakurban/Practical-Data-Science/blob/master/DQL_CartPole.ipynb
