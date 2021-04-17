@@ -3,7 +3,10 @@ import gym
 import slimevolleygym
 
 import torch
+import torch.nn as nn
+
 from torch.autograd import Variable
+
 
 import time
 import math
@@ -116,9 +119,10 @@ def plot_res(values, title=''):
 # # Get random search results
 # random_s = random_search(env, episodes)
 
-class DQN():
+class DQN(nn.Module):
     ''' Deep Q Neural Network class. '''
     def __init__(self, state_dim, action_dim, hidden_dim=64, lr=0.05):
+            super(DQN, self).__init__()
             self.criterion = torch.nn.MSELoss()
             self.model = torch.nn.Sequential(
                             torch.nn.Linear(state_dim, hidden_dim),
@@ -327,7 +331,7 @@ def q_learning(env, model, episodes, gamma=0.9,
         if verbose:
             print("episode: {}, total reward: {}".format(episode_i, total))
 
-            if episode_i % 20 == 0:
+            if episode_i % 10 == 0:
                 model.saveModel()
 
             if replay:
@@ -349,8 +353,8 @@ def q_learning(env, model, episodes, gamma=0.9,
 #                     title='DQL with Replay')
 
 # Get replay results
-# dqn_double = DQN_double(n_state, n_action, n_hidden, lr)
-dqn_double = torch.load("107062240_hw2_data")
+dqn_double = DQN_double(n_state, n_action, n_hidden, lr)
+# dqn_double = torch.load("107062240_hw2_data.pth")
 double =  q_learning(env, dqn_double, episodes, gamma=.9, 
                     epsilon=0.2, replay=True, double=True,
                     title='Double DQL with Replay', n_update=10)
