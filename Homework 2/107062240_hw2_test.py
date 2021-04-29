@@ -159,7 +159,7 @@ class Agent(object):
       print(self.model)
 
     def act(self, observation):
-        return self.model.predict(observation)
+        return torch.argmax(self.model.predict(observation)).item() % 6
 
 obs = env.reset()
 done = False

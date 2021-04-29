@@ -7,6 +7,7 @@ from typing import Deque, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import cv2
 
 import torch
 import torch.nn as nn
@@ -19,6 +20,8 @@ from torch.nn.utils import clip_grad_norm
 import gym
 import slimevolleygym
 
+from segment_tree import MinSegmentTree, SumSegmentTree
+
 ### REPLAY BUFFER
 class ReplayBuffer:
 
@@ -29,8 +32,8 @@ class ReplayBuffer:
                 n_step: int = 1, 
                 gamma: float = 0.99
     ):
-        self.obs_buf = np.zeros([size, obs_dim], dtype = np.float32)
-        self.next_obs_buf = np.zeros([size, obs_dim], dtype = np.float32)
+        self.obs_buf = np.zeros([size, obs_dim, obs_dim], dtype = np.float32)
+        self.next_obs_buf = np.zeros([size, obs_dim, obs_dim], dtype = np.float32)
         self.acts_buf = np.zeros([size], dtype=np.float32)
         self.rews_buf = np.zeros([size], dtype=np.float32)
         self.done_buf = np.zeros(size, dtype=np.float32)
@@ -62,6 +65,9 @@ class ReplayBuffer:
             self.n_step_buffer, self.gamma
         )
         obs, act = self.n_step_buffer[0][:2]
+
+        next_obs = cv2.cvtColor(next_obs, cv2.COLOR_RGB2GRAY)
+        next_obs = cv2.resize(next_obs, (84, 84), interpolation=cv2.INTER_AREA)
         
         self.obs_buf[self.ptr] = obs
         self.next_obs_buf[self.ptr] = next_obs
@@ -117,119 +123,6 @@ class ReplayBuffer:
         return self.size
 
 import operator
-
-
-class SegmentTree(object):
-    def __init__(self, capacity, operation, neutral_element):
-        assert capacity > 0 and capacity & (capacity - 1) == 0, "capacity must be positive and a power of 2."
-        self._capacity = capacity
-        self._value = [neutral_element for _ in range(2 * capacity)]
-        self._operation = operation
-
-    def _reduce_helper(self, start, end, node, node_start, node_end):
-        if start == node_start and end == node_end:
-            return self._value[node]
-        mid = (node_start + node_end) // 2
-        if end <= mid:
-            return self._reduce_helper(start, end, 2 * node, node_start, mid)
-        else:
-            if mid + 1 <= start:
-                return self._reduce_helper(start, end, 2 * node + 1, mid + 1, node_end)
-            else:
-                return self._operation(
-                    self._reduce_helper(start, mid, 2 * node, node_start, mid),
-                    self._reduce_helper(mid + 1, end, 2 * node + 1, mid + 1, node_end)
-                )
-
-    def reduce(self, start=0, end=None):
-        """Returns result of applying `self.operation`
-        to a contiguous subsequence of the array.
-            self.operation(arr[start], operation(arr[start+1], operation(... arr[end])))
-        Parameters
-        ----------
-        start: int
-            beginning of the subsequence
-        end: int
-            end of the subsequences
-        Returns
-        -------
-        reduced: obj
-            result of reducing self.operation over the specified range of array elements.
-        """
-        if end is None:
-            end = self._capacity
-        if end < 0:
-            end += self._capacity
-        end -= 1
-        return self._reduce_helper(start, end, 1, 0, self._capacity - 1)
-
-    def __setitem__(self, idx, val):
-        # index of the leaf
-        idx += self._capacity
-        self._value[idx] = val
-        idx //= 2
-        while idx >= 1:
-            self._value[idx] = self._operation(
-                self._value[2 * idx],
-                self._value[2 * idx + 1]
-            )
-            idx //= 2
-
-    def __getitem__(self, idx):
-        assert 0 <= idx < self._capacity
-        return self._value[self._capacity + idx]
-
-
-class SumSegmentTree(SegmentTree):
-    def __init__(self, capacity):
-        super(SumSegmentTree, self).__init__(
-            capacity=capacity,
-            operation=operator.add,
-            neutral_element=0.0
-        )
-
-    def sum(self, start=0, end=None):
-        """Returns arr[start] + ... + arr[end]"""
-        return super(SumSegmentTree, self).reduce(start, end)
-
-    def find_prefixsum_idx(self, prefixsum):
-        """Find the highest index `i` in the array such that
-            sum(arr[0] + arr[1] + ... + arr[i - i]) <= prefixsum
-        if array values are probabilities, this function
-        allows to sample indexes according to the discrete
-        probability efficiently.
-        Parameters
-        ----------
-        perfixsum: float
-            upperbound on the sum of array prefix
-        Returns
-        -------
-        idx: int
-            highest index satisfying the prefixsum constraint
-        """
-        assert 0 <= prefixsum <= self.sum() + 1e-5
-        idx = 1
-        while idx < self._capacity:  # while non-leaf
-            if self._value[2 * idx] > prefixsum:
-                idx = 2 * idx
-            else:
-                prefixsum -= self._value[2 * idx]
-                idx = 2 * idx + 1
-        return idx - self._capacity
-
-
-class MinSegmentTree(SegmentTree):
-    def __init__(self, capacity):
-        super(MinSegmentTree, self).__init__(
-            capacity=capacity,
-            operation=min,
-            neutral_element=float('inf')
-        )
-
-    def min(self, start=0, end=None):
-        """Returns min(arr[start], ...,  arr[end])"""
-
-        return super(MinSegmentTree, self).reduce(start, end)
 
 ### PRIORITIZED REPLAY BUFFER
 class PrioritizedReplayBuffer(ReplayBuffer):
@@ -571,7 +464,6 @@ class DQNAgent:
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
-        print(self.device)
         
         # PER
         # memory for 1-step Learning
@@ -619,9 +511,15 @@ class DQNAgent:
     def select_action(self, state: np.ndarray) -> np.ndarray:
         """Select an action from the input state."""
         # NoisyNet: no epsilon greedy action selection
+
+        state = cv2.cvtColor(state, cv2.COLOR_RGB2GRAY)
+        state = cv2.resize(state, (84, 84), interpolation=cv2.INTER_AREA)
+        # print(state.shape)
+        
         selected_action = self.dqn(
             torch.FloatTensor(state).to(self.device)
         ).argmax()
+        
         selected_action = selected_action.detach().cpu().numpy()
         
         if not self.is_test:
@@ -631,13 +529,15 @@ class DQNAgent:
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.float64, bool]:
         """Take an action and return the response of the env."""
-        next_state, reward, done, _ = self.env.step(action)
+        # print(action % 6)
+        next_state, reward, done, _ = self.env.step(action % 6)
 
         if not self.is_test:
             self.transition += [reward, next_state, done]
             
             # N-step transition
             if self.use_n_step:
+                print(len(self.transition))
                 one_step_transition = self.memory_n.store(*self.transition)
             # 1-step transition
             else:
@@ -829,7 +729,7 @@ class DQNAgent:
 
 
 ### ENVIRONMENT
-env_id = "CartPole-v0"
+env_id = "SlimeVolleyNoFrameskip-v0"
 env = gym.make(env_id)
 
 # Set random seed
