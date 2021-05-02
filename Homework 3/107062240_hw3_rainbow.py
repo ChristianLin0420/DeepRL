@@ -124,7 +124,7 @@ class QWOPEnv(gym.Env):
         self.evoke_actions = True
 
         # Open browser and go to QWOP page
-        self.driver = webdriver.Chrome("/Users/christianlin/Downloads/chromedriver")
+        self.driver = webdriver.Chrome("/Users/christian/Downloads/chromedriver")
         self.driver.get(f'http://localhost:{PORT}/Athletics.html')
 
         # Wait a bit and then start game
@@ -865,6 +865,8 @@ class DQNAgent:
         ).to(self.device)
         self.dqn_target.load_state_dict(self.dqn.state_dict())
         self.dqn_target.eval()
+
+        self.load_model()
         
         # optimizer
         self.optimizer = optim.Adam(self.dqn.parameters())
@@ -890,7 +892,7 @@ class DQNAgent:
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.float64, bool]:
         """Take an action and return the response of the env."""
-        print(action)
+        # print(action)
         converted_action = int(action)
         next_state, reward, done, _ = self.env.step(converted_action)
 
@@ -912,6 +914,11 @@ class DQNAgent:
 
     def save_model(self):
         torch.save(self.dqn.state_dict(), "107062240_hw3_data")
+
+    def load_model(self):
+        # model = torch.load_state_dict(torch.load("107062240_hw3_data"))
+        self.dqn.load_state_dict(torch.load("107062240_hw3_data"))
+        self._target_hard_update()
 
     def update_model(self) -> torch.Tensor:
         """Update the model by gradient descent."""
@@ -996,7 +1003,7 @@ class DQNAgent:
                     self._target_hard_update()
 
             # plotting
-            if frame_idx % plotting_interval == 0:
+            if frame_idx % 200000 == 0:
                 self._plot(frame_idx, scores, losses)
 
             if frame_idx % 10000 == 0:
@@ -1076,6 +1083,7 @@ class DQNAgent:
 
     def _target_hard_update(self):
         """Hard update: target <- local."""
+        print(self.dqn.state_dict())
         self.dqn_target.load_state_dict(self.dqn.state_dict())
                 
     def _plot(
@@ -1093,9 +1101,12 @@ class DQNAgent:
         plt.subplot(132)
         plt.title('loss')
         plt.plot(losses)
-        plt.draw()
-        plt.pause(0.5)
-        plt.clf()
+        plt.show()
+        filename = str(frame_idx) + ".png"
+        plt.savefig("1000000_train.png")
+        # plt.pause(0.5)
+        # plt.clf()
+
 
 '''
     ENVIRONMENT
@@ -1126,12 +1137,12 @@ env.seed(seed)
 '''
 
 # parameters
-num_frames = 20000
+num_frames = 1000000
 memory_size = 10000
 batch_size = 128
 target_update = 100
 
 # train
-agent = DQNAgeqnt(env, memory_size, batch_size, target_update)
+agent = DQNAgent(env, memory_size, batch_size, target_update)
 
 agent.train(num_frames)
