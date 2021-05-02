@@ -124,7 +124,7 @@ class QWOPEnv(gym.Env):
         self.evoke_actions = True
 
         # Open browser and go to QWOP page
-        self.driver = webdriver.Chrome("/Users/christian/Downloads/chromedriver")
+        self.driver = webdriver.Chrome("/Users/christianlin/Downloads/chromedriver")
         self.driver.get(f'http://localhost:{PORT}/Athletics.html')
 
         # Wait a bit and then start game
@@ -920,6 +920,9 @@ class DQNAgent:
         self.dqn.load_state_dict(torch.load("107062240_hw3_data"))
         self._target_hard_update()
 
+    def get_model(self):
+        return self.dqn
+
     def update_model(self) -> torch.Tensor:
         """Update the model by gradient descent."""
         # PER needs beta to calculate weights
@@ -1034,6 +1037,10 @@ class DQNAgent:
         
         return frames
 
+    def act(self, observation):
+        action = self.select_action(observation)
+        return action
+
     def _compute_dqn_loss(self, samples: Dict[str, np.ndarray], gamma: float) -> torch.Tensor:
         """Return categorical dqn loss."""
         device = self.device  # for shortening the following lines
@@ -1114,6 +1121,7 @@ class DQNAgent:
 
 # env_id = "CartPole-v0"
 env = QWOPEnv()
+state = env.reset()
 
 '''
     SET RANDOM SEED
@@ -1145,4 +1153,15 @@ target_update = 100
 # train
 agent = DQNAgent(env, memory_size, batch_size, target_update)
 
-agent.train(num_frames)
+done = False
+score = 0
+
+while not done:
+    action =  agent.act(state)
+    next_state, reward, done = agent.step(action)
+
+    state = next_state
+    score += reward
+
+print("score: {}".format(score))
+env.close()
