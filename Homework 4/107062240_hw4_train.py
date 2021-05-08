@@ -5,10 +5,12 @@ from osim.env import L2M2019Env
 '''
 import copy
 import numpy as np
+import pandas as pd
 
 import argparse
 import os
 import utils
+from collections import Iterable
 
 import torch
 import torch.nn as nn
@@ -107,9 +109,57 @@ class TD3(object):
 
 
     def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-        return self.actor(state).cpu().data.numpy().flatten()
 
+        def flatten_list(lis):
+            for item in lis:
+                if isinstance(item, Iterable) and not isinstance(item, str):
+                    for x in flatten(item):
+                        yield x
+                else:        
+                    yield item
+
+        def flatten(mydict):
+            new_dict = {}
+            for key, value in mydict.items():
+                if type(value) == list:
+                    print("key: {}, value: {}".format(key, value))
+                    new_dict[key] = flatten_list(value)
+                else:
+                    new_dict[key] = value
+            return new_dict
+
+        # state = pd.json_normalize(state, sep='_')
+        state = flatten(state)
+
+        new_state = []
+
+        for v in state.values():       
+            # print(type(v))
+            if type(v) == dict:
+                temp = pd.json_normalize(v, sep = '_')
+                temp = list(temp.values)
+                for item in temp:
+                    if type(item) == np.ndarray:
+                        for val in item:
+                            if type(val) == list:
+                                for t in val:
+                                    new_state.append(float(t))
+                            else:
+                                new_state.append(float(val))
+                    else:
+                        new_state.append(item)
+            else:
+                # print("asdf")
+                for arr in v:
+                    for a in arr:
+                        for val in a:
+                            new_state.append(float(val))
+
+        new_state = np.array(new_state)
+        # print(new_state)
+
+        new_state = torch.FloatTensor(new_state.reshape(1, -1)).to(device)
+        return self.actor(new_state).cpu().data.numpy().flatten()
 
     def train(self, replay_buffer, batch_size=256):
         self.total_it += 1
@@ -227,16 +277,15 @@ class ReplayBuffer(object):
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
-def eval_policy(policy, env_name, seed, eval_episodes=10):
+def eval_policy(policy, env_name, seed, eval_episodes=100):
     eval_env = L2M2019Env(visualize=True)
     eval_env.seed(seed + 100)
 
     avg_reward = 0.
     for _ in range(eval_episodes):
         state, done = eval_env.reset(), False
-        print(np.array(state).shape)
         while not done:
-            action = policy.select_action(np.array(state))
+            action = policy.select_action(state)
             state, reward, done, _ = eval_env.step(action)
             avg_reward += reward
 
@@ -346,7 +395,7 @@ if __name__ == "__main__":
         replay_buffer.add(state, action, next_state, reward, done_bool)
 
         state = next_state
-        episode_reward += reward
+        episode_reward += reward 
 
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps:

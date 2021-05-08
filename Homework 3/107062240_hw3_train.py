@@ -124,7 +124,7 @@ class QWOPEnv(gym.Env):
         self.evoke_actions = True
 
         # Open browser and go to QWOP page
-        self.driver = webdriver.Chrome("/Users/christian/Downloads/chromedriver")
+        self.driver = webdriver.Chrome("/Users/christianlin/Downloads/chromedriver")
         self.driver.get(f'http://localhost:{PORT}/Athletics.html')
 
         # Wait a bit and then start game
@@ -979,6 +979,8 @@ class DQNAgent:
 
             state = next_state
             score += reward
+
+            print(state)
             
             # NoisyNet: removed decrease of epsilon
             
@@ -1083,7 +1085,7 @@ class DQNAgent:
 
     def _target_hard_update(self):
         """Hard update: target <- local."""
-        print(self.dqn.state_dict())
+        # print(self.dqn.state_dict())
         self.dqn_target.load_state_dict(self.dqn.state_dict())
                 
     def _plot(
