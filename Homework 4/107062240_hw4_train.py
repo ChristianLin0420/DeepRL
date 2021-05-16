@@ -22,6 +22,53 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
+def flatten_list(lis):
+    for item in lis:
+        if isinstance(item, Iterable) and not isinstance(item, str):
+            for x in flatten(item):
+                yield x
+        else:        
+            yield item
+
+def flatten(mydict):
+    new_dict = {}
+    for key, value in mydict.items():
+        if type(value) == list:
+            print("key: {}, value: {}".format(key, value))
+            new_dict[key] = flatten_list(value)
+        else:
+            new_dict[key] = value
+    return new_dict
+
+def FF(ss):
+    state = flatten(ss)
+    # print(state)
+
+    new_state = []
+
+    for v in state.values():       
+        # print(type(v))
+        if type(v) == dict:
+            temp = pd.json_normalize(v, sep = '_')
+            temp = list(temp.values)
+            for item in temp:
+                if type(item) == np.ndarray:
+                    for val in item:
+                        if type(val) == list:
+                            for t in val:
+                                new_state.append(float(t))
+                        else:
+                            new_state.append(float(val))
+                else:
+                    new_state.append(item)
+        else:
+            # print("asdf")
+            for arr in v:
+                for a in arr:
+                    for val in a:
+                        new_state.append(float(val))
+
+    return new_state
 
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
@@ -110,50 +157,7 @@ class TD3(object):
 
     def select_action(self, state):
 
-        def flatten_list(lis):
-            for item in lis:
-                if isinstance(item, Iterable) and not isinstance(item, str):
-                    for x in flatten(item):
-                        yield x
-                else:        
-                    yield item
-
-        def flatten(mydict):
-            new_dict = {}
-            for key, value in mydict.items():
-                if type(value) == list:
-                    print("key: {}, value: {}".format(key, value))
-                    new_dict[key] = flatten_list(value)
-                else:
-                    new_dict[key] = value
-            return new_dict
-
-        # state = pd.json_normalize(state, sep='_')
-        state = flatten(state)
-
-        new_state = []
-
-        for v in state.values():       
-            # print(type(v))
-            if type(v) == dict:
-                temp = pd.json_normalize(v, sep = '_')
-                temp = list(temp.values)
-                for item in temp:
-                    if type(item) == np.ndarray:
-                        for val in item:
-                            if type(val) == list:
-                                for t in val:
-                                    new_state.append(float(t))
-                            else:
-                                new_state.append(float(val))
-                    else:
-                        new_state.append(item)
-            else:
-                # print("asdf")
-                for arr in v:
-                    for a in arr:
-                        for val in a:
-                            new_state.append(float(val))
+        new_state = FF(state)
 
         new_state = np.array(new_state)
         # print(new_state)
@@ -249,9 +253,11 @@ class ReplayBuffer(object):
 
 
     def add(self, state, action, next_state, reward, done):
-        self.state[self.ptr] = state
+        new_state = FF(state)
+        new_next_state = FF(next_state)
+        self.state[self.ptr] = new_state
         self.action[self.ptr] = action
-        self.next_state[self.ptr] = next_state
+        self.next_state[self.ptr] = new_next_state
         self.reward[self.ptr] = reward
         self.not_done[self.ptr] = 1. - done
 
@@ -304,8 +310,8 @@ if __name__ == "__main__":
     parser.add_argument("--env", default="HalfCheetah-v2")          # OpenAI gym environment name
     parser.add_argument("--seed", default=0, type=int)              # Sets Gym, PyTorch and Numpy seeds
     parser.add_argument("--start_timesteps", default=25e3, type=int)# Time steps initial random policy is used
-    parser.add_argument("--eval_freq", default=5e3, type=int)       # How often (time steps) we evaluate
-    parser.add_argument("--max_timesteps", default=1e6, type=int)   # Max time steps to run environment
+    parser.add_argument("--eval_freq", default=1e4, type=int)       # How often (time steps) we evaluate
+    parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99)                 # Discount factor
@@ -355,10 +361,6 @@ if __name__ == "__main__":
         kwargs["noise_clip"] = args.noise_clip * max_action
         kwargs["policy_freq"] = args.policy_freq
         policy = TD3(**kwargs)
-    elif args.policy == "OurDDPG":
-        policy = OurDDPG.DDPG(**kwargs)
-    elif args.policy == "DDPG":
-        policy = DDPG.DDPG(**kwargs)
 
     if args.load_model != "":
         policy_file = file_name if args.load_model == "default" else args.load_model
@@ -375,8 +377,9 @@ if __name__ == "__main__":
     episode_num = 0
 
     for t in range(int(args.max_timesteps)):
-        
         episode_timesteps += 1
+
+        print(t)
 
         # Select action randomly or according to policy
         if t < args.start_timesteps:
@@ -387,9 +390,10 @@ if __name__ == "__main__":
                 + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
             ).clip(-max_action, max_action)
 
+
         # Perform action
         next_state, reward, done, _ = env.step(action) 
-        done_bool = float(done) if episode_timesteps < env._max_episode_steps else 0
+        done_bool = float(done) if episode_timesteps < 200 else 0
 
         # Store data in replay buffer
         replay_buffer.add(state, action, next_state, reward, done_bool)
@@ -412,6 +416,7 @@ if __name__ == "__main__":
 
         # Evaluate episode
         if (t + 1) % args.eval_freq == 0:
+            print("save new model!")
             evaluations.append(eval_policy(policy, args.env, args.seed))
             np.save(f"./results/{file_name}", evaluations)
-            if args.save_model: policy.save(f"./models/{file_name}")
+            policy.save("models/107062240_HW4_data")
