@@ -283,7 +283,7 @@ class ReplayBuffer(object):
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
-def eval_policy(policy, env_name, seed, eval_episodes=100):
+def eval_policy(policy, env_name, seed, eval_episodes=10):
     eval_env = L2M2019Env(visualize=True)
     eval_env.seed(seed + 100)
 
@@ -309,7 +309,7 @@ if __name__ == "__main__":
     parser.add_argument("--policy", default="TD3")                  # Policy name (TD3, DDPG or OurDDPG)
     parser.add_argument("--env", default="HalfCheetah-v2")          # OpenAI gym environment name
     parser.add_argument("--seed", default=0, type=int)              # Sets Gym, PyTorch and Numpy seeds
-    parser.add_argument("--start_timesteps", default=25e3, type=int)# Time steps initial random policy is used
+    parser.add_argument("--start_timesteps", default=10e3, type=int)# Time steps initial random policy is used
     parser.add_argument("--eval_freq", default=1e4, type=int)       # How often (time steps) we evaluate
     parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
@@ -379,17 +379,29 @@ if __name__ == "__main__":
     for t in range(int(args.max_timesteps)):
         episode_timesteps += 1
 
-        print(t)
-
         # Select action randomly or according to policy
         if t < args.start_timesteps:
             action = env.action_space.sample()
         else:
             action = (
-                policy.select_action(np.array(state))
+                policy.select_action(state)
                 + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
             ).clip(-max_action, max_action)
 
+
+        def action_one_hot(input):
+            output = []
+            
+            for e in input:
+                if e >= 0.5:
+                    output.append(1)
+                else:
+                    output.append(0)
+
+            return np.array(output)
+
+        action = action_one_hot(action)
+        # print(action)
 
         # Perform action
         next_state, reward, done, _ = env.step(action) 
@@ -403,6 +415,7 @@ if __name__ == "__main__":
 
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps:
+            print("Start training ........ ")
             policy.train(replay_buffer, args.batch_size)
 
         if done: 
