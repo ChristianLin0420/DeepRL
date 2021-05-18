@@ -9,6 +9,8 @@ import pandas as pd
 
 import argparse
 import os
+import os.path
+from os import path
 import utils
 from collections import Iterable
 
@@ -233,6 +235,12 @@ class TD3(object):
         self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
         self.actor_target = copy.deepcopy(self.actor)
 
+    def check_existed_files(self, filename):
+        print ("File exists:"+str(path.exists(filename + "_critic")))
+        print ("File exists:" + str(path.exists(filename + "_critic_optimizer")))
+        print ("File exists:"+str(path.exists(filename + "_actor")))
+        print ("File exists:" + str(path.exists(filename + "_actor_optimizer")))
+
 '''
     REPLAYBUFFER
 '''
@@ -309,7 +317,7 @@ if __name__ == "__main__":
     parser.add_argument("--policy", default="TD3")                  # Policy name (TD3, DDPG or OurDDPG)
     parser.add_argument("--env", default="HalfCheetah-v2")          # OpenAI gym environment name
     parser.add_argument("--seed", default=0, type=int)              # Sets Gym, PyTorch and Numpy seeds
-    parser.add_argument("--start_timesteps", default=10e3, type=int)# Time steps initial random policy is used
+    parser.add_argument("--start_timesteps", default=10e2, type=int)# Time steps initial random policy is used
     parser.add_argument("--eval_freq", default=1e4, type=int)       # How often (time steps) we evaluate
     parser.add_argument("--max_timesteps", default=5e7, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
@@ -320,7 +328,7 @@ if __name__ == "__main__":
     parser.add_argument("--noise_clip", default=0.5)                # Range to clip target policy noise
     parser.add_argument("--policy_freq", default=2, type=int)       # Frequency of delayed policy updates
     parser.add_argument("--save_model", action="store_true")        # Save model and optimizer parameters
-    parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
+    parser.add_argument("--load_model", default="true")                 # Model load file name, "" doesn't load, "default" uses file_name
     args = parser.parse_args()
 
     file_name = f"{args.policy}_{args.env}_{args.seed}"
@@ -363,8 +371,9 @@ if __name__ == "__main__":
         policy = TD3(**kwargs)
 
     if args.load_model != "":
+        policy.check_existed_files("models/107062240_HW4_data")
         policy_file = file_name if args.load_model == "default" else args.load_model
-        policy.load(f"./models/{policy_file}")
+        policy.load("models/107062240_HW4_data")
 
     replay_buffer = ReplayBuffer(state_dim, action_dim)
     
