@@ -283,7 +283,7 @@ class ReplayBuffer(object):
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
-def eval_policy(policy, env_name, seed, eval_episodes=10):
+def eval_policy(policy, env_name, seed, eval_episodes=20):
     eval_env = L2M2019Env(visualize=True)
     eval_env.seed(seed + 100)
 
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", default=0, type=int)              # Sets Gym, PyTorch and Numpy seeds
     parser.add_argument("--start_timesteps", default=10e3, type=int)# Time steps initial random policy is used
     parser.add_argument("--eval_freq", default=1e4, type=int)       # How often (time steps) we evaluate
-    parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
+    parser.add_argument("--max_timesteps", default=5e7, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99)                 # Discount factor
@@ -415,7 +415,7 @@ if __name__ == "__main__":
 
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps:
-            print("Start training ........ ")
+            # print("Start training ........ ")
             policy.train(replay_buffer, args.batch_size)
 
         if done: 
