@@ -260,7 +260,7 @@ class ReplayBuffer(object):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-    def add(self, state, action, next_state, reward, done):
+    def add(self, state, action, next_state, reward, done):        
         new_state = FF(state)
         new_next_state = FF(next_state)
         self.state[self.ptr] = new_state
@@ -291,7 +291,7 @@ class ReplayBuffer(object):
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
-def eval_policy(policy, env_name, seed, eval_episodes=20):
+def eval_policy(policy, env_name, seed, eval_episodes=1):
     eval_env = L2M2019Env(visualize=True)
     eval_env.seed(seed + 100)
 
@@ -371,7 +371,7 @@ if __name__ == "__main__":
         policy = TD3(**kwargs)
 
     if args.load_model != "":
-        policy.check_existed_files("models/107062240_HW4_data")
+        # policy.check_existed_files("models/107062240_HW4_data")
         policy_file = file_name if args.load_model == "default" else args.load_model
         policy.load("models/107062240_HW4_data")
 
