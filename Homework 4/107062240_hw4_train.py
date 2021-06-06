@@ -156,7 +156,6 @@ class TD3(object):
 
         self.total_it = 0
 
-
     def select_action(self, state):
 
         new_state = FF(state)
@@ -300,6 +299,14 @@ def eval_policy(policy, env_name, seed, eval_episodes=5):
         state, done = eval_env.reset(), False
         while not done:
             action = policy.select_action(state)
+
+            for i in range(len(action)):
+                if action[i] > 1:
+                    action[i] = 1
+                elif action[i] < 0: 
+                    action[i] = 0
+
+            # print(action)
             state, reward, done, _ = eval_env.step(action)
             avg_reward += reward
 
@@ -397,24 +404,17 @@ if __name__ == "__main__":
                 + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
             ).clip(-max_action, max_action)
 
+        for i in range(len(action)):
+            if action[i] > 1:
+                action[i] = 1
+            elif action[i] < 0: 
+                action[i] = 0
 
-        def action_one_hot(input):
-            output = []
-            
-            for e in input:
-                if e >= 0.5:
-                    output.append(1)
-                else:
-                    output.append(0)
-
-            return np.array(output)
-
-        action = action_one_hot(action)
         # print(action)
 
         # Perform action
         next_state, reward, done, _ = env.step(action) 
-        done_bool = float(done) if episode_timesteps < 200 else 0
+        done_bool = float(done) if episode_timesteps < 500 else 0
 
         # Store data in replay buffer
         replay_buffer.add(state, action, next_state, reward, done_bool)
