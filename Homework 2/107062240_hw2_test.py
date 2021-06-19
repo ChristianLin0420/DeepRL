@@ -1,24 +1,24 @@
 
+import cv2
 import copy
+import random
 
 import torch
 import gym
-import slimevolleygym
 
 import torch.nn as nn
 
-import cv2
+# import slimevolleygym
 
-env = gym.envs.make("SlimeVolleyNoFrameskip-v0")
+# env = gym.envs.make("SlimeVolleyNoFrameskip-v0")
 
-# Number of states
-n_state = env.observation_space.shape[0]
-# Number of actions
-n_action = env.action_space.n
-# Number of hidden nodes in the DQN
-n_hidden = 50
-# Learning rate
-lr = 0.001
+# # Number of states
+# n_state = env.observation_space.shape[0]
+# # Number of actions
+# n_action = env.action_space.n
+
+# print(n_state)
+# print(n_action)
 
 class DQN(nn.Module):
     ''' Deep Q Neural Network class. '''
@@ -34,7 +34,7 @@ class DQN(nn.Module):
                         torch.nn.LeakyReLU(),
                         torch.nn.Linear(hidden_dim*2, action_dim)
                     )
-            self.optimizer = torch.optim.Adam(self.model.parameters(), lr)
+            self.optimizer = torch.optim.Adam(self.model.parameters(), 0.001)
 
 
 
@@ -57,10 +57,6 @@ class DQN(nn.Module):
             state = state.reshape((84, 84))
             # print("predict state shape: {}".format(state.shape))
             return self.model(torch.Tensor(state))
-
-    def saveModel(self):
-        save_path = './107062240_hw2.pth'
-        torch.save(self.model.state_dict(), save_path)
 
 # Expand DQL class with a replay function.
 class DQN_replay(DQN):
@@ -153,26 +149,27 @@ def observation(frame):
 class Agent(object):
     """Agent that acts randomly."""
     def __init__(self):
-      self.model = DQN_double(n_state, n_action, n_hidden, lr)
+      self.model = DQN_double(84, 6, 50, 0.001)
       # self.model = torch.load("107062240_hw2_data.pth")
-      self.model.load_state_dict(torch.load("107062240_hw2.pth"), strict=False)
-      print(self.model)
+      self.model.load_state_dict(torch.load("107062240_hw2_data.pth"), strict=False)
+    #   print(self.model)
 
-    def act(self, observation):
+    def act(self, observation, reward, done):
         return torch.argmax(self.model.predict(observation)).item() % 6
 
-obs = env.reset()
-done = False
-total_reward = 0
+# obs = env.reset()
+# done = False
+# total_reward = 0
 
-agent = Agent()
+# agent = Agent()
+# reward = 0
+# done = False
 
-while not done:
-  action = agent.act(obs)
-  action = torch.argmax(action).item()
+# while not done:
+#   action = agent.act(obs, reward, done)
 
-  obs, reward, done, info = env.step(action % 6)
-  total_reward += reward
-  env.render()
+#   obs, reward, done, info = env.step(action)
+#   total_reward += reward
+#   env.render()
 
-print("score:", total_reward)
+# print("score:", total_reward)
